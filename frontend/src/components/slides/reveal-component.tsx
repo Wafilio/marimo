@@ -54,10 +54,10 @@ import {
   SlideCellView,
 } from "@/components/slides/slide-cell-view";
 import { SlideNotesEditor } from "./slide-notes-editor";
+import { canResolveInitialSlideHashAtom } from "./initial-slide-hash";
 import { buildSubslideNotes, NOTES_DIVIDER } from "./slide-notes";
 import { cn } from "@/utils/cn";
 import { isIslands } from "@/core/islands/utils";
-import { initialRunCompletedAtom } from "@/core/kernel/state";
 import { useNotebookCodeAvailable } from "@/core/meta/code-visibility";
 import { type AppMode, kioskModeAtom } from "@/core/mode";
 import { runtimeAdapterAtom } from "@/core/runtime/adapter";
@@ -512,8 +512,7 @@ const RevealSlidesComponent = ({
   // also omit the plugin because each receiver would start another runtime.
   const kioskMode = useAtomValue(kioskModeAtom);
   const runtimeKind = useAtomValue(runtimeAdapterAtom).kind;
-  const initialRunCompleted = useAtomValue(initialRunCompletedAtom);
-  const canResolveInitialHash = runtimeKind !== "wasm" || initialRunCompleted;
+  const canResolveInitialHash = useAtomValue(canResolveInitialSlideHashAtom);
   const deckPlugins = useMemo(
     () => (kioskMode || !supportsSpeakerView(runtimeKind) ? [] : [RevealNotes]),
     [kioskMode, runtimeKind],
