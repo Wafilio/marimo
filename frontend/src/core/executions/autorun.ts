@@ -1,5 +1,6 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
+import type * as Protocol from "@marimo-team/client/protocol";
 import { atom, type createStore } from "jotai/vanilla";
 import type { NotebookReplica } from "@/core/notebook/replica";
 import { Deferred } from "@/utils/Deferred";
@@ -34,18 +35,29 @@ export function createNotebookAutorun({
       return null;
     }
     const { runs, executions } = get(replica.executionsAtom);
+    // Startup runs what this runtime has not reached, so a result it produced
+    // on its own, such as a Markdown preview, or an early manual run leaves
+    // the other cells to it.
+    const reached = new Set<Protocol.CellId>();
+    for (const run of runs.values()) {
+      if (run.runtime_id === runtime.id && run.status !== "completed") {
+        for (const cellId of run.cells) {
+          reached.add(cellId);
+        }
+      }
+    }
+    for (const { record } of executions.values()) {
+      if (record.runtime_id === runtime.id && record.cell_id !== null) {
+        reached.add(record.cell_id);
+      }
+    }
     return {
       key: `${notebook.id}:${runtime.id}`,
       notebook,
       runtime,
       backend,
       runs,
-      used:
-        [...runs.values()].some((run) => run.runtime_id === runtime.id) ||
-        [...executions.values()].some(
-          ({ record }) => record.runtime_id === runtime.id,
-        ),
-      cells: document.revision.order,
+      remaining: document.revision.order.filter((id) => !reached.has(id)),
     };
   });
   const pendingAtom = atom((get) => {
@@ -106,7 +118,7 @@ export function createNotebookAutorun({
           ) {
             return;
           }
-          if (allowed === false || state.used || state.cells.length === 0) {
+          if (allowed === false || state.remaining.length === 0) {
             attempt.phase = "settled";
             return;
           }
@@ -130,7 +142,7 @@ export function createNotebookAutorun({
           const unsubscribe = store.sub(stateAtom, observe);
           try {
             const result = await state.backend.notebook(state.notebook.id).run({
-              cells: state.cells.map((id) => ({ id })),
+              cells: state.remaining.map((id) => ({ id })),
               idempotencyKey: `startup:${key}`,
             });
             if (!result.ok) {
@@ -174,7 +186,7 @@ export function createNotebookAutorun({
         if (
           !autoRun ||
           !state.notebook.operations.includes("runtime.run") ||
-          state.used ||
+          state.remaining.length === 0 ||
           (state.runtime.status !== "starting" &&
             state.runtime.status !== "running")
         ) {

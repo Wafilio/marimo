@@ -125,16 +125,45 @@ describe("notebook startup", () => {
   });
 
   it.each([MockExecutions.completed("c1"), MockExecutions.running("c1")])(
-    "leaves an existing runtime alone, including cells never run",
+    "runs only the cells this runtime has not reached",
     async (execution) => {
       const { start, run } = setup({ records: [execution] });
       start();
-      await Promise.resolve();
-      expect(run).not.toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(run).toHaveBeenCalledExactlyOnceWith("n1", {
+          cells: [{ id: "c2" }],
+          idempotencyKey: "startup:n1:r1",
+        }),
+      );
     },
   );
 
-  it("does not autorun when the host has accepted a run without executions yet", async () => {
+  it("runs cells whose results another runtime produced", async () => {
+    const { start, run } = setup({
+      records: [
+        MockExecutions.completed("c1", { runtime_id: null, run_id: null }),
+        MockExecutions.completed("c2", { runtime_id: "r0" }),
+      ],
+    });
+    start();
+    await vi.waitFor(() =>
+      expect(run).toHaveBeenCalledExactlyOnceWith("n1", {
+        cells: [{ id: "c1" }, { id: "c2" }],
+        idempotencyKey: "startup:n1:r1",
+      }),
+    );
+  });
+
+  it("leaves a runtime that has reached every cell alone", async () => {
+    const { store, start, run, autorun } = setup({
+      records: [MockExecutions.completed("c1"), MockExecutions.running("c2")],
+    });
+    start();
+    await vi.waitFor(() => expect(store.get(autorun.pendingAtom)).toBe(false));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("leaves the cells a run the host accepted will reach to that run", async () => {
     const { store, replica, start, run } = setup();
     store.set(replica.executionsAtom, (state) => ({
       ...state,
@@ -155,8 +184,12 @@ describe("notebook startup", () => {
       ]),
     }));
     start();
-    await Promise.resolve();
-    expect(run).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(run).toHaveBeenCalledExactlyOnceWith("n1", {
+        cells: [{ id: "c2" }],
+        idempotencyKey: "startup:n1:r1",
+      }),
+    );
   });
 
   it("reads execution history from its supplied replica, not the active editor", async () => {
@@ -165,8 +198,12 @@ describe("notebook startup", () => {
     });
     store.set(activeNotebookReplicaAtom, null);
     start();
-    await Promise.resolve();
-    expect(run).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(run).toHaveBeenCalledExactlyOnceWith("n1", {
+        cells: [{ id: "c2" }],
+        idempotencyKey: "startup:n1:r1",
+      }),
+    );
   });
 
   it("does not repeat startup after reconnect or effect remount, but starts a replacement runtime", async () => {
@@ -231,13 +268,14 @@ describe("notebook startup", () => {
   });
 
   it("does not run cells added to a notebook that opened empty", async () => {
-    const { store, replica, start, run, prepare } = setup();
+    const { store, replica, start, run, prepare, autorun } = setup();
     store.set(
       replica.documentAtom,
       withCells(document(), { c1: null, c2: null }),
     );
     start();
-    await vi.waitFor(() => expect(prepare).toHaveResolved());
+    await vi.waitFor(() => expect(store.get(autorun.pendingAtom)).toBe(false));
+    expect(prepare).not.toHaveBeenCalled();
     store.set(replica.documentAtom, document());
     await Promise.resolve();
     expect(run).not.toHaveBeenCalled();
